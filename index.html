@@ -101,26 +101,15 @@
             const statusMsg = document.getElementById('db-status-msg');
             
             try {
-                // 讀取同一個資料夾下的 data.json 檔案
                 const response = await fetch('data.json');
                 if (!response.ok) throw new Error("網路請求失敗");
                 
-                // 【關鍵修改】：先讀取為「純文字」，不要直接解析 JSON
-                let rawText = await response.text();
+                // 因為 data.json 已經是標準格式，直接解析即可
+                const jsonData = await response.json();
                 
-                // 自動修復 JSON 格式：將獨立的物件用逗號連起來，並在最外層加上中括號
-                rawText = rawText.trim().replace(/}\s*{/g, '},{');
-                if (!rawText.startsWith('[')) {
-                    rawText = `[${rawText}]`;
-                }
-
-                // 將修復後的文字轉換為 JSON 物件
-                const jsonData = JSON.parse(rawText);
-                
-                // 支援直接是陣列，或是包在 laws 屬性裡的 JSON
                 lawDatabase = Array.isArray(jsonData) ? jsonData : (jsonData.laws || []);
                 
-                // 計算總共有幾條法規 (遍歷 law -> chapter -> article)
+                // 計算總共有幾條法規
                 let totalArticles = 0;
                 lawDatabase.forEach(law => {
                     if (law.chapters) {
@@ -157,12 +146,10 @@
             if (!lawDatabase || lawDatabase.length === 0) return;
             let matchCount = 0;
             
-            // 安全處理關鍵字，避免正則表達式報錯
             const safeKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const regex = new RegExp(`(${safeKeyword})`, 'gi');
             const highlightText = (text) => text.replace(regex, '<span class="highlight">$1</span>');
 
-            // 針對新版 data.json 的層級結構進行遍歷
             lawDatabase.forEach(law => {
                 const lawName = law.law_name || "";
                 
@@ -173,31 +160,33 @@
                     if (!chapter.articles) return;
                     chapter.articles.forEach(article => {
                         const articleNum = article.article_number || "";
-                        // 將 paragraphs 陣列組合成字串，用換行符號連接
                         const paragraphsArray = article.paragraphs || [];
-                        const content = paragraphsArray.join('\n');
+                        
+                        // 【優化】：過濾掉完全空白的段落，避免產生多餘空行
+                        const validParagraphs = paragraphsArray.filter(p => p.trim() !== '');
+                        const contentForSearch = validParagraphs.join('');
 
-                        // 若法規名稱、章節、條號或內容包含關鍵字，則視為符合
                         if (lawName.includes(keyword) || chapterName.includes(keyword) || 
-                            articleNum.includes(keyword) || content.includes(keyword)) {
+                            articleNum.includes(keyword) || contentForSearch.includes(keyword)) {
                             matchCount++;
                             
-                            // 將換行符號 (\n) 轉換為網頁的換行標籤
-                            const formattedContent = content.replace(/\n/g, '<br><br>');
+                            // 【優化】：將每段文字包進帶有微小下邊距的 <p> 標籤中，取代原本的 <br><br>
+                            const formattedContent = validParagraphs.map(p => {
+                                return `<p class="mb-2">${highlightText(p)}</p>`;
+                            }).join('');
 
                             const lawDiv = document.createElement('div');
                             lawDiv.className = 'p-4 bg-slate-50 rounded border border-slate-200 hover:shadow-sm transition';
                             
-                            // 判斷是否為「預設章節 (無分章)」，若是則不顯示章節名稱
                             const displayChapter = chapterName.includes("預設章節") ? "" : ` - ${highlightText(chapterName)}`;
                             
                             lawDiv.innerHTML = `
-                                <h3 class="font-bold text-blue-800 mb-2">
+                                <h3 class="font-bold text-blue-800 mb-3 border-b border-slate-200 pb-2">
                                     ${highlightText(lawName)}${displayChapter} - ${highlightText(articleNum)}
                                 </h3>
-                                <p class="text-slate-700 leading-relaxed text-sm max-h-60 overflow-y-auto custom-scrollbar pr-2">
-                                    ${highlightText(formattedContent)}
-                                </p>
+                                <div class="text-slate-700 leading-relaxed text-sm max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                                    ${formattedContent}
+                                </div>
                             `;
                             resultsContainer.appendChild(lawDiv);
                         }
@@ -215,7 +204,6 @@
             }
         }
 
-        // 支援按下 Enter 鍵直接搜尋
         document.getElementById('searchInput').addEventListener('keypress', function (e) {
             if (e.key === 'Enter') searchLaw();
         });
@@ -237,12 +225,10 @@
 
             let date = new Date(startDateInput);
             
-            // 【始日不計入邏輯】
             date.setDate(date.getDate() + daysInput);
 
             let isDelayed = false;
 
-            // 【遇假日順延邏輯】(0是週日，6是週六)
             while (date.getDay() === 0 || date.getDay() === 6) {
                 date.setDate(date.getDate() + 1);
                 isDelayed = true;
